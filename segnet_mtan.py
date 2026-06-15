@@ -182,7 +182,7 @@ class SegNet(nn.Module):
 # define model, optimiser and scheduler
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 SegNet_MTAN = SegNet().to(device)
-SegNet_MTAN = torch.compile(SegNet_MTAN)
+# SegNet_MTAN = torch.compile(SegNet_MTAN)
 optimizer = optim.Adam(SegNet_MTAN.parameters(), lr=1e-4)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
 scaler = torch.cuda.amp.GradScaler()
@@ -207,6 +207,8 @@ optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
 start_epoch = checkpoint['epoch'] + 1
+
+SegNet_MTAN = torch.compile(SegNet_MTAN)
 
 print(f'Model loaded from epoch: {start_epoch}')
 
