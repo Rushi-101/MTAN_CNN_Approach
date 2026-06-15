@@ -79,7 +79,7 @@ def normal_error(x_pred, x_output):
             (error_deg < 30.0).float().mean().item())
 
 
-checkpoint_dir = '/content/drive/MyDrive/MTAN_Checkpoints'
+checkpoint_dir = '/kaggle/working'
 
 def save_checkpoint(epoch, model, optimizer, scheduler, keep_last=3, every_n=5):
     if epoch % every_n != 0:

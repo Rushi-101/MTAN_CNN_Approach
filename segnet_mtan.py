@@ -187,17 +187,20 @@ optimizer = optim.Adam(SegNet_MTAN.parameters(), lr=1e-4)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
 scaler = torch.cuda.amp.GradScaler()
 
-checkpt_dir = '/content/drive/MyDrive/MTAN_Checkpoints'
+# checkpt_dir = '/content/drive/MyDrive/MTAN_Checkpoints'
 
-# Get latest checkpoint
-checkpoints = sorted(
-    [f for f in os.listdir(checkpt_dir) if f.endswith('.pth')],
-    key=lambda x: int(x.split('_')[-1].replace('.pth', ''))
-)
+# # Get latest checkpoint
+# checkpoints = sorted(
+#     [f for f in os.listdir(checkpt_dir) if f.endswith('.pth')],
+#     key=lambda x: int(x.split('_')[-1].replace('.pth', ''))
+# )
 
-latest = os.path.join(checkpt_dir, checkpoints[-1])
+# latest = os.path.join(checkpt_dir, checkpoints[-1])
 
-checkpoint = torch.load(latest, map_location=device)
+# checkpoint = torch.load(latest, map_location=device)
+
+checkpt_dir = '/kaggle/working/mtan_epoch_28.pth'
+checkpoint = torch.load(checkpt_dir, map_location=device)
 
 SegNet_MTAN.load_state_dict(checkpoint['model_state_dict'])
 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
