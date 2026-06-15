@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -23,64 +24,14 @@ def model_fit(x_pred, x_output, task_type):
 
     if task_type == 'depth':
         # depth loss: l1 norm
-        loss = torch.sum(torch.abs(x_pred - x_output) * binary_mask) / torch.nonzero(binary_mask, as_tuple=False).size(0)
+        loss = torch.sum(torch.abs(x_pred - x_output) * binary_mask) / binary_mask.sum()
 
     if task_type == 'normal':
         # normal loss: dot product
-        loss = 1 - torch.sum((x_pred * x_output) * binary_mask) / torch.nonzero(binary_mask, as_tuple=False).size(0)
+        loss = 1 - torch.sum((x_pred * x_output) * binary_mask) / binary_mask.sum()
 
     return loss
 
-# Legacy: compute mIoU and Acc. for each image and average across all images.
-
-# def compute_miou(x_pred, x_output):
-#     _, x_pred_label = torch.max(x_pred, dim=1)
-#     x_output_label = x_output
-#     batch_size = x_pred.size(0)
-#     class_nb = x_pred.size(1)
-#     device = x_pred.device
-#     for i in range(batch_size):
-#         true_class = 0
-#         first_switch = True
-#         invalid_mask = (x_output[i] >= 0).float()
-#         for j in range(class_nb):
-#             pred_mask = torch.eq(x_pred_label[i], j * torch.ones(x_pred_label[i].shape).long().to(device))
-#             true_mask = torch.eq(x_output_label[i], j * torch.ones(x_output_label[i].shape).long().to(device))
-#             mask_comb = pred_mask.float() + true_mask.float()
-#             union = torch.sum((mask_comb > 0).float() * invalid_mask)  # remove non-defined pixel predictions
-#             intsec = torch.sum((mask_comb > 1).float())
-#             if union == 0:
-#                 continue
-#             if first_switch:
-#                 class_prob = intsec / union
-#                 first_switch = False
-#             else:
-#                 class_prob = intsec / union + class_prob
-#             true_class += 1
-#         if i == 0:
-#             batch_avg = class_prob / true_class
-#         else:
-#             batch_avg = class_prob / true_class + batch_avg
-#     return batch_avg / batch_size
-#
-#
-# def compute_iou(x_pred, x_output):
-#     _, x_pred_label = torch.max(x_pred, dim=1)
-#     x_output_label = x_output
-#     batch_size = x_pred.size(0)
-#     for i in range(batch_size):
-#         if i == 0:
-#             pixel_acc = torch.div(
-#                 torch.sum(torch.eq(x_pred_label[i], x_output_label[i]).float()),
-#                 torch.sum((x_output_label[i] >= 0).float()))
-#         else:
-#             pixel_acc = pixel_acc + torch.div(
-#                 torch.sum(torch.eq(x_pred_label[i], x_output_label[i]).float()),
-#                 torch.sum((x_output_label[i] >= 0).float()))
-#     return pixel_acc / batch_size
-
-
-# New mIoU and Acc. formula: accumulate every pixel and average across all pixels in all images
 class ConfMatrix(object):
     def __init__(self, num_classes):
         self.num_classes = num_classes
@@ -109,26 +60,46 @@ def depth_error(x_pred, x_output):
     x_output_true = x_output.masked_select(binary_mask)
     abs_err = torch.abs(x_pred_true - x_output_true)
     rel_err = torch.abs(x_pred_true - x_output_true) / x_output_true
-    return (torch.sum(abs_err) / torch.nonzero(binary_mask, as_tuple=False).size(0)).item(), \
-           (torch.sum(rel_err) / torch.nonzero(binary_mask, as_tuple=False).size(0)).item()
+    return (torch.sum(abs_err) / binary_mask.sum()).item(), \
+           (torch.sum(rel_err) / binary_mask.sum()).item()
 
 
 def normal_error(x_pred, x_output):
     binary_mask = (torch.sum(x_output, dim=1) != 0)
-    error = torch.acos(torch.clamp(torch.sum(x_pred * x_output, 1).masked_select(binary_mask), -1, 1)).detach().cpu().numpy()
-    error = np.degrees(error)
-    return np.mean(error), np.median(error), np.mean(error < 11.25), np.mean(error < 22.5), np.mean(error < 30)
+    # clamp before acos to avoid NaN from fp precision
+    cos_sim = torch.clamp(torch.sum(x_pred * x_output, 1).masked_select(binary_mask), -1, 1)
+    # stay on GPU, convert once
+    error = torch.acos(cos_sim)
+    error_deg = torch.rad2deg(error)
+    mean = error_deg.mean().item()
+    median = error_deg.median().item()
+    return (mean, median,
+            (error_deg < 11.25).float().mean().item(),
+            (error_deg < 22.5).float().mean().item(),
+            (error_deg < 30.0).float().mean().item())
+
 
 checkpoint_dir = '/content/drive/MyDrive/MTAN_Checkpoints'
 
-def save_checkpoint(epoch, model, optimizer, scheduler):
+def save_checkpoint(epoch, model, optimizer, scheduler, keep_last=3, every_n=5):
+    if epoch % every_n != 0:
+        return
+    path = f'{checkpoint_dir}/mtan_epoch_{epoch}.pth'
     torch.save({
-        'epoch':                epoch,
-        'model_state_dict':     model.state_dict(),
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
-    }, f'{checkpoint_dir}/mtan_epoch_{epoch}.pth')
+    }, path)
     print(f'Checkpoint saved → mtan_epoch_{epoch}.pth')
+
+    # prune old checkpoints
+    ckpts = sorted(
+        [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')],
+        key=lambda x: int(x.split('_')[-1].replace('.pth', ''))
+    )
+    for old in ckpts[:-keep_last]:
+        os.remove(os.path.join(checkpoint_dir, old))
 
 
 """
@@ -136,7 +107,7 @@ def save_checkpoint(epoch, model, optimizer, scheduler):
 """
 
 
-def multi_task_trainer(train_loader, test_loader, multi_task_model, device, optimizer, scheduler, opt, start_epoch,total_epoch=200):
+def multi_task_trainer(train_loader, test_loader, multi_task_model, device, optimizer, scheduler, opt, start_epoch, total_epoch=200, scaler=None):
     train_batch = len(train_loader)
     test_batch = len(test_loader)
     T = opt.temp
@@ -161,38 +132,74 @@ def multi_task_trainer(train_loader, test_loader, multi_task_model, device, opti
         multi_task_model.train()
         train_dataset = iter(train_loader)
         conf_mat = ConfMatrix(multi_task_model.class_nb)
+
+        acc_semantic_loss = 0.0
+        acc_depth_loss    = 0.0
+        acc_depth_abs     = 0.0
+        acc_depth_rel     = 0.0
+        acc_normal_loss   = 0.0
+        acc_normal_mean   = 0.0
+        acc_normal_med    = 0.0
+        acc_normal_11     = 0.0
+        acc_normal_22     = 0.0
+        acc_normal_30     = 0.0
+
         for k in range(train_batch):
             train_data, train_label, train_depth, train_normal = next(train_dataset)
             train_data, train_label = train_data.to(device), train_label.long().to(device)
             train_depth, train_normal = train_depth.to(device), train_normal.to(device)
 
-            train_pred, logsigma = multi_task_model(train_data)
-
             optimizer.zero_grad()
-            train_loss = [model_fit(train_pred[0], train_label, 'semantic'),
-                          model_fit(train_pred[1], train_depth, 'depth'),
-                          model_fit(train_pred[2], train_normal, 'normal')]
 
-            if opt.weight == 'equal' or opt.weight == 'dwa':
-                loss = sum([lambda_weight[i, index] * train_loss[i] for i in range(3)])
+
+            with torch.autocast(device_type='cuda'):
+                train_pred, logsigma = multi_task_model(train_data)
+                train_loss = [model_fit(train_pred[0], train_label, 'semantic'),
+                            model_fit(train_pred[1], train_depth, 'depth'),
+                            model_fit(train_pred[2], train_normal, 'normal')]
+
+                if opt.weight == 'equal' or opt.weight == 'dwa':
+                    loss = sum([lambda_weight[i, index] * train_loss[i] for i in range(3)])
+                else:
+                    loss = sum(1 / (2 * torch.exp(logsigma[i])) * train_loss[i] + logsigma[i] / 2 for i in range(3))
+
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
             else:
-                loss = sum(1 / (2 * torch.exp(logsigma[i])) * train_loss[i] + logsigma[i] / 2 for i in range(3))
-
-            loss.backward()
-            optimizer.step()
+                loss.backward()
+                optimizer.step()
 
             # accumulate label prediction for every pixel in training images
             conf_mat.update(train_pred[0].argmax(1).flatten(), train_label.flatten())
 
-            cost[0] = train_loss[0].item()
-            cost[3] = train_loss[1].item()
-            cost[4], cost[5] = depth_error(train_pred[1], train_depth)
-            cost[6] = train_loss[2].item()
-            cost[7], cost[8], cost[9], cost[10], cost[11] = normal_error(train_pred[2], train_normal)
-            avg_cost[index, :12] += cost[:12] / train_batch
+            abs_err, rel_err = depth_error(train_pred[1], train_depth)
+            n_mean, n_med, n_11, n_22, n_30 = normal_error(train_pred[2], train_normal)
 
+            acc_semantic_loss += train_loss[0].item()
+            acc_depth_loss    += train_loss[1].item()
+            acc_depth_abs     += abs_err
+            acc_depth_rel     += rel_err
+            acc_normal_loss   += train_loss[2].item()
+            acc_normal_mean   += n_mean
+            acc_normal_med    += n_med
+            acc_normal_11     += n_11
+            acc_normal_22     += n_22
+            acc_normal_30     += n_30
+
+        avg_cost[index, 0]  = acc_semantic_loss / train_batch
+        avg_cost[index, 3]  = acc_depth_loss    / train_batch
+        avg_cost[index, 4]  = acc_depth_abs     / train_batch
+        avg_cost[index, 5]  = acc_depth_rel     / train_batch
+        avg_cost[index, 6]  = acc_normal_loss   / train_batch
+        avg_cost[index, 7]  = acc_normal_mean   / train_batch
+        avg_cost[index, 8]  = acc_normal_med    / train_batch
+        avg_cost[index, 9]  = acc_normal_11     / train_batch
+        avg_cost[index, 10] = acc_normal_22     / train_batch
+        avg_cost[index, 11] = acc_normal_30     / train_batch
         # compute mIoU and acc
-        avg_cost[index, 1:3] = np.array(conf_mat.get_metrics())
+        avg_cost[index, 1], avg_cost[index, 2] = conf_mat.get_metrics()
 
         # evaluating test data
         multi_task_model.eval()

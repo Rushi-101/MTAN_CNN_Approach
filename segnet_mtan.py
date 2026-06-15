@@ -182,9 +182,10 @@ class SegNet(nn.Module):
 # define model, optimiser and scheduler
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 SegNet_MTAN = SegNet().to(device)
+SegNet_MTAN = torch.compile(SegNet_MTAN)
 optimizer = optim.Adam(SegNet_MTAN.parameters(), lr=1e-4)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
-
+scaler = torch.cuda.amp.GradScaler()
 
 checkpt_dir = '/content/drive/MyDrive/MTAN_Checkpoints'
 
@@ -225,13 +226,19 @@ batch_size = 2
 nyuv2_train_loader = torch.utils.data.DataLoader(
     dataset=nyuv2_train_set,
     batch_size=batch_size,
-    shuffle=True)
+    shuffle=True,
+    num_workers=4,          
+    pin_memory=True,        
+    persistent_workers=True)
 
 
 nyuv2_test_loader = torch.utils.data.DataLoader(
     dataset=nyuv2_test_set,
     batch_size=batch_size,
-    shuffle=False)
+    shuffle=False,
+    num_workers=4,          
+    pin_memory=True,        
+    persistent_workers=True)
 
 # Train and evaluate multi-task network
 multi_task_trainer(nyuv2_train_loader,
@@ -242,4 +249,5 @@ multi_task_trainer(nyuv2_train_loader,
                    scheduler,
                    opt,
                    start_epoch,
-                   200)
+                   200,
+                   scaler)
