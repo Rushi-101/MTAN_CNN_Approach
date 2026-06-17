@@ -81,7 +81,7 @@ def gradient_cosine_weights(task_losses, shared_ref, num_tasks=3, eps=1e-8):
 
     # invert: tasks with lower (more conflicting) similarity get higher weight
     weights = K * torch.softmax(-mean_sim, dim=0)
-    return weights.detach()
+    return weights
 
 class ConfMatrix(object):
     def __init__(self, num_classes):
@@ -132,7 +132,7 @@ def normal_error(x_pred, x_output):
 
 checkpoint_dir = '/kaggle/working'
 
-def save_checkpoint(epoch, model, optimizer, scheduler, keep_last=3, every_n=5):
+def save_checkpoint(epoch, model, optimizer, scheduler, keep_last=3, every_n=25):
     if epoch % every_n != 0:
         return
     path = f'{checkpoint_dir}/mtan_epoch_{epoch}.pth'
@@ -208,7 +208,7 @@ def multi_task_trainer(train_loader, test_loader, multi_task_model, device, opti
                 train_loss = [model_fit(train_pred[0], train_label, 'semantic'),
                             model_fit(train_pred[1], train_depth, 'depth'),
                             model_fit(train_pred[2], train_normal, 'normal')]
-
+                
                 if opt.weight == 'gcs':
                     # Gradient Cosine Similarity task balancing.
                     # Requires the model to expose `_shared_ref`, a shared
@@ -219,7 +219,9 @@ def multi_task_trainer(train_loader, test_loader, multi_task_model, device, opti
                     # numerically unstable; the reference tensor and grads
                     # are upcast to fp32 internally by autograd in this block.
                     shared_ref = multi_task_model._shared_ref
+
                     gcs_weights = gradient_cosine_weights(train_loss, shared_ref, num_tasks=3)
+
                     loss = sum(gcs_weights[i] * train_loss[i] for i in range(3))
                 elif opt.weight == 'equal' or opt.weight == 'dwa':
                     loss = sum([lambda_weight[i, index] * train_loss[i] for i in range(3)])
@@ -278,7 +280,7 @@ def multi_task_trainer(train_loader, test_loader, multi_task_model, device, opti
                 test_loss = [model_fit(test_pred[0], test_label, 'semantic'),
                              model_fit(test_pred[1], test_depth, 'depth'),
                              model_fit(test_pred[2], test_normal, 'normal')]
-
+                             
                 conf_mat.update(test_pred[0].argmax(1).flatten(), test_label.flatten())
 
                 cost[12] = test_loss[0].item()

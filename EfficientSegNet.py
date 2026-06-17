@@ -258,6 +258,7 @@ class EfficientSegNetV2(nn.Module):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
+
     # ---- attention helper layers: UNCHANGED from EfficientSegNet.py ----
     def conv_layer(self, channel, pred=False):
         if not pred:
@@ -340,7 +341,7 @@ class EfficientSegNetV2(nn.Module):
         # can use it as the shared reference tensor for gradient cosine
         # balancing, without changing the public forward() signature.
 
-        self._shared_ref = g_decoder[-1][-1]
+        self._shared_ref = g_encoder[-1][1]
 
         return [t1_pred, t2_pred, t3_pred], self.logsigma
 
@@ -396,7 +397,7 @@ def gradient_cosine_weights(task_losses, shared_ref, num_tasks=3, eps=1e-8):
 
     # invert: lower similarity (more conflicting) -> higher weight
     weights = K * torch.softmax(-mean_sim, dim=0)
-    return weights.detach()
+    return weights
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,18 +434,18 @@ if __name__ == '__main__':
 
     # checkpoint = torch.load(latest, map_location=device)
 
-    checkpt_dir = '/kaggle/working/mtan_epoch_28.pth'
-    checkpoint = torch.load(checkpt_dir, map_location=device)
+    # checkpt_dir = '/kaggle/working/mtan_epoch_28.pth'
+    # checkpoint = torch.load(checkpt_dir, map_location=device)
 
-    SegNet_MTAN.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    # SegNet_MTAN.load_state_dict(checkpoint['model_state_dict'])
+    # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    # scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
-    start_epoch = checkpoint['epoch'] + 1
+    start_epoch = 0
 
-    SegNet_MTAN = torch.compile(SegNet_MTAN)
+    # SegNet_MTAN = torch.compile(SegNet_MTAN)
 
-    print(f'Model loaded from epoch: {start_epoch}')
+    # print(f'Model loaded from epoch: {start_epoch}')
 
     print('Parameter Space: ABS: {:.1f}, REL: {:.4f}'.format(count_parameters(SegNet_MTAN),
                                                             count_parameters(SegNet_MTAN) / 24981069))
